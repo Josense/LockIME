@@ -1,0 +1,104 @@
+import AppKit
+
+/// 菜单栏界面：状态图标 + 下拉菜单。
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private var statusItem: NSStatusItem!
+    private let controller = LockController()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.menu = makeMenu()
+
+        controller.onStateChange = { [weak self] in
+            self?.updateIcon()
+        }
+        updateIcon()
+    }
+
+    // MARK: - 菜单
+
+    private func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu(menu)
+    }
+
+    private func rebuildMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // 状态行
+        let statusTitle: String
+        if let lockedID = controller.lockedID,
+           let source = InputSourceManager.find(byID: lockedID) {
+            statusTitle = "🔒 已锁定：\(InputSourceManager.name(of: source) ?? lockedID)"
+        } else {
+            statusTitle = "🔓 未锁定"
+        }
+        let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
+
+        menu.addItem(.separator())
+
+        // 输入法列表
+        for source in InputSourceManager.availableSources() {
+            guard let id = InputSourceManager.id(of: source) else { continue }
+            let item = NSMenuItem(
+                title: InputSourceManager.name(of: source) ?? id,
+                action: #selector(selectInputSource(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = id
+            item.state = (id == controller.lockedID) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        // 解锁
+        let unlock = NSMenuItem(title: "解锁", action: #selector(unlock), keyEquivalent: "")
+        unlock.target = self
+        unlock.isEnabled = controller.isLocked
+        menu.addItem(unlock)
+
+        menu.addItem(.separator())
+
+        // 退出
+        let quit = NSMenuItem(title: "退出 LockIME", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    // MARK: - 动作
+
+    @objc private func selectInputSource(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        // 点击已锁定的输入法 = 解锁
+        if controller.lockedID == id {
+            controller.unlock()
+        } else {
+            controller.lock(to: id)
+        }
+    }
+
+    @objc private func unlock() {
+        controller.unlock()
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    // MARK: - 图标
+
+    private func updateIcon() {
+        guard let button = statusItem.button else { return }
+        let symbol = controller.isLocked ? "lock.fill" : "keyboard"
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "LockIME")
+    }
+}

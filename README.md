@@ -21,8 +21,17 @@
 ### 方式二：从源码编译
 
 ```bash
-swiftc -O -o LockIME main.swift
+swiftc -O -o LockIME main.swift AppDelegate.swift LockController.swift InputSourceManager.swift
 ```
+
+## 项目结构
+
+| 文件 | 职责 |
+|------|------|
+| `main.swift` | 程序入口 |
+| `InputSourceManager.swift` | TIS API 封装（枚举 / 读取 / 切换输入法） |
+| `LockController.swift` | 锁定状态、持久化、监听并切回（核心业务） |
+| `AppDelegate.swift` | 菜单栏界面（状态图标 + 下拉菜单） |
 
 ## 使用
 
