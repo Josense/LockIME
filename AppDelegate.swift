@@ -34,11 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let statusTitle: String
         if let lockedID = controller.lockedID,
            let source = InputSourceManager.find(byID: lockedID) {
-            statusTitle = "🔒 已锁定：\(InputSourceManager.name(of: source) ?? lockedID)"
+            statusTitle = "已锁定：\(InputSourceManager.name(of: source) ?? lockedID)"
         } else {
-            statusTitle = "🔓 未锁定"
+            statusTitle = "未锁定"
         }
         let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusItem.image = menuBarIcon()
         statusItem.isEnabled = false
         menu.addItem(statusItem)
 
@@ -96,9 +97,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - 图标
 
+    /// 加载菜单栏图标（模板图标，随系统明暗模式自动着色）。
+    private func menuBarIcon() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "menubar", withExtension: "png") else {
+            return nil
+        }
+        let image = NSImage(contentsOf: url)
+        image?.isTemplate = true
+        return image
+    }
+
     private func updateIcon() {
         guard let button = statusItem.button else { return }
-        let symbol = controller.isLocked ? "lock.fill" : "keyboard"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "LockIME")
+        button.image = menuBarIcon()
+        // 未锁定时半透明，锁定时实心，便于一眼区分状态
+        button.alphaValue = controller.isLocked ? 1.0 : 0.5
     }
 }
