@@ -5,6 +5,7 @@ import Carbon
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let controller = LockController()
+    private var inputSourceObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -13,7 +14,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.onStateChange = { [weak self] in
             self?.updateIcon()
         }
+        observeInputSourceChanges()
         updateIcon()
+    }
+
+    /// 输入源集合变化（启用 / 停用 / 安装 / 移除）时清掉图标与名称的缓存，
+    /// 否则新增或变更过的输入法会一直用旧的标签 / 父名。
+    private func observeInputSourceChanges() {
+        let center = DistributedNotificationCenter.default()
+        for name in InputSourceManager.inputSourcesChangedNotifications {
+            let observer = center.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { _ in
+                InputSourceManager.invalidateCaches()
+            }
+            inputSourceObservers.append(observer)
+        }
     }
 
     // MARK: - 菜单

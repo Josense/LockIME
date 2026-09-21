@@ -4,20 +4,63 @@ import Foundation
 
 /// 封装 Carbon 文本输入源（TIS）API，负责输入法的枚举、读取与切换。
 enum InputSourceManager {
+    /// 输入源集合发生变化时系统发出的通知名，用于清缓存。
+    /// 其中两个是 Carbon SPI（未公开在公共头文件中），需动态解析，取不到则忽略。
+    static var inputSourcesChangedNotifications: [NSNotification.Name] {
+        let keys: [CFString?] = [
+            kTISNotifyEnabledKeyboardInputSourcesChanged,
+            PrivateTISKeys.enabledNonKeyboardInputSourcesChanged,
+            PrivateTISKeys.installedInputSourcesChanged,
+        ]
+        return keys.compactMap { $0 }.map { NSNotification.Name($0 as String) }
+    }
+
     /// 输入法切换事件的通知名（分布式通知）。
     static let selectionChangedNotification = NSNotification.Name(
         kTISNotifySelectedKeyboardInputSourceChanged as String
     )
 
-    /// 枚举所有可锁定的输入法（键盘布局 + 输入模式 + 手写）。
+    /// 枚举用户实际启用的输入法（键盘布局 + 输入模式 + 手写）。
+    ///
+    /// 不能用 `TISCreateInputSourceList(nil, false)`：它一开始返回不完整的列表，
+    /// 随后异步补齐成「全部已安装里 IsEnabled 的」，会让菜单先正确、后变多。
+    /// 这里改成取全部已安装源，再自己按「真正启用」过滤。
+    ///
+    /// 另外用户删除某个输入法后，TIS 可能仍把它的输入模式标为 enabled，
+    /// 所以输入模式还要求它所属的**父输入法**也是启用的。
     static func availableSources() -> [TISInputSource] {
-        guard let list = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else {
+        guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] else {
             return []
         }
-        // 手写输入源属于 Palette 类别，不在键盘布局 / 输入模式里，需要单独纳入。
-        return list.filter {
-            isKeyboardLayout($0) || isKeyboardInputMode($0) || isHandwriting($0)
+        return list.filter { source in
+            guard isEnabled(source) else { return false }
+            if isKeyboardLayout(source) || isHandwriting(source) { return true }
+            if isKeyboardInputMode(source) { return isParentEnabled(source) }
+            return false
         }
+    }
+
+    /// 是否已启用。
+    private static func isEnabled(_ source: TISInputSource) -> Bool {
+        guard let ptr = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsEnabled) else {
+            return false
+        }
+        return CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(ptr).takeUnretainedValue())
+    }
+
+    /// 输入模式所属的父输入法是否启用。沿 ID 向上找到最近的父输入法类型，返回其启用状态。
+    private static func isParentEnabled(_ source: TISInputSource) -> Bool {
+        guard let id = id(of: source) else { return false }
+        var components = id.split(separator: ".").map(String.init)
+        while components.count > 1 {
+            components.removeLast()
+            let ancestorID = components.joined(separator: ".")
+            if let ancestor = allSourcesByID[ancestorID],
+               hasType(ancestor, kTISTypeKeyboardInputMethodModeEnabled) {
+                return isEnabled(ancestor)
+            }
+        }
+        return false
     }
 
     /// 输入法的唯一标识。
@@ -73,7 +116,15 @@ enum InputSourceManager {
     }
 
     /// 所有已安装输入源（含未启用的父输入法），按 ID 索引，用于查父名。
-    private static let allSourcesByID: [String: TISInputSource] = {
+    private static var allSourcesByIDCache: [String: TISInputSource]?
+    private static var allSourcesByID: [String: TISInputSource] {
+        if let cache = allSourcesByIDCache { return cache }
+        let built = buildAllSourcesByID()
+        allSourcesByIDCache = built
+        return built
+    }
+
+    private static func buildAllSourcesByID() -> [String: TISInputSource] {
         guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] else {
             return [:]
         }
@@ -82,7 +133,7 @@ enum InputSourceManager {
             if let id = id(of: source) { map[id] = source }
         }
         return map
-    }()
+    }
 
     /// 所有菜单图标统一的槽位尺寸（系统输入法的文字块就是这么大）。
     /// 三方输入法的图标也放进同样大小的槽位里居中，保证所有菜单项文字对齐。
@@ -269,12 +320,28 @@ enum InputSourceManager {
     /// 手写输入源的 ID（`com.apple.inputmethod.ChineseHandwriting`）。
     static let handwritingID: String? = PrivateTISKeys.lookupString("kTISAppleChineseHandwritingInputSourceID")
 
+    /// 输入源集合发生变化（启用 / 停用 / 安装 / 移除）时清空派生缓存，
+    /// 否则新增或变更过的输入法会用到旧的标签 / 父名。
+    static func invalidateCaches() {
+        systemIconLabelsCache = nil
+        plistIconLabelsCache = nil
+        allSourcesByIDCache = nil
+    }
+
     /// 系统声明的图标短标签：`输入源 ID -> Primary 标签`。
     /// `kTISPropertyInputSourceIconLabels` 是已导出的 Carbon SPI，直接给出菜单实际使用的标签
     /// （键盘布局也在其中，如 U.S. → US、Romanian → RO）。
-    private static let systemIconLabels: [String: String] = {
-        guard let key = PrivateTISKeys.inputSourceIconLabels else { return [:] }
+    private static var systemIconLabelsCache: [String: String]?
+    private static var systemIconLabels: [String: String] {
+        if let cache = systemIconLabelsCache { return cache }
+        let built = buildSystemIconLabels()
+        systemIconLabelsCache = built
+        return built
+    }
+
+    private static func buildSystemIconLabels() -> [String: String] {
         var result: [String: String] = [:]
+        guard let key = PrivateTISKeys.inputSourceIconLabels else { return result }
         let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] ?? []
         for source in list {
             guard let id = id(of: source),
@@ -285,10 +352,18 @@ enum InputSourceManager {
             result[id] = primary
         }
         return result
-    }()
+    }
 
     /// 兜底：从各输入法的 Info.plist 里读 `TISIconLabels.Primary`（老系统上没有上面的 SPI 时）。
-    private static let plistIconLabels: [String: String] = {
+    private static var plistIconLabelsCache: [String: String]?
+    private static var plistIconLabels: [String: String] {
+        if let cache = plistIconLabelsCache { return cache }
+        let built = buildPlistIconLabels()
+        plistIconLabelsCache = built
+        return built
+    }
+
+    private static func buildPlistIconLabels() -> [String: String] {
         var labels: [String: String] = [:]
         let fileManager = FileManager.default
         let roots = [
@@ -328,7 +403,7 @@ enum InputSourceManager {
             }
         }
         return labels
-    }()
+    }
 }
 
 /// 系统输入法菜单使用的若干 Carbon SPI（未公开在公共头文件中），通过 dlsym 动态解析。
@@ -337,6 +412,8 @@ enum PrivateTISKeys {
     static let inputSourceIsFromSystem = lookup("kTISPropertyInputSourceIsFromSystem")
     static let handwritingLocalizedNames = lookup("kTISPropertyHandwritingLocalizedNames")
     static let intendedLanguage = lookup("kTISPropertyIntendedLanguage")
+    static let enabledNonKeyboardInputSourcesChanged = lookup("kTISNotifyEnabledNonKeyboardInputSourcesChanged")
+    static let installedInputSourcesChanged = lookup("kTISNotifyInstalledInputSourcesChanged")
 
     static func lookup(_ name: String) -> CFString? {
         guard let handle = dlopen("/System/Library/Frameworks/Carbon.framework/Carbon", RTLD_LAZY),
