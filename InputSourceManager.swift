@@ -156,7 +156,7 @@ enum InputSourceManager {
     /// 标签过宽时按「能放几个字放几个」截断（如「拼音」→「拼」，而「US」保留两位）。
     private static func labelChip(_ label: String) -> NSImage {
         let size = iconSlot
-        let font = NSFont.systemFont(ofSize: 11, weight: .heavy)
+        let font = NSFont.systemFont(ofSize: 11, weight: .bold)
         let text = fittedLabel(label, font: font, maxWidth: 18)
 
         let image = NSImage(size: size)
