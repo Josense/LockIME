@@ -56,14 +56,14 @@ LockIME 是一款轻量的 macOS 菜单栏应用，通过 Carbon Text Input Sour
 通过 Homebrew Cask 安装：
 
 ```bash
-brew tap Josense/lockime
+brew tap Josense/tap
 brew install --cask lockime
 ```
 
 也可以用一条命令完成 tap 与安装：
 
 ```bash
-brew install --cask Josense/lockime/lockime
+brew install --cask Josense/tap/lockime
 ```
 
 常用管理命令：
@@ -73,7 +73,7 @@ brew upgrade --cask lockime   # 更新到最新版本
 brew uninstall --cask lockime # 卸载
 ```
 
-> 该 Cask 由本项目的 tap 仓库维护；若后续被收录进官方仓库，则可直接执行 `brew install --cask lockime`。
+> 该 Cask 由通用 tap 仓库 [Josense/homebrew-tap](https://github.com/Josense/homebrew-tap) 维护，后续的 macOS 开源项目也会发布在这里；若该 Cask 被收录进官方仓库，则可直接执行 `brew install --cask lockime`。
 
 ### 方式三：从源码编译
 
