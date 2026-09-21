@@ -1,6 +1,8 @@
 # 编译产物
 LockIME
 LockIME.app/
+build/
+*.dmg
 
 # macOS
 .DS_Store

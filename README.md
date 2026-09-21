@@ -24,6 +24,44 @@
 swiftc -O -o LockIME main.swift AppDelegate.swift LockController.swift InputSourceManager.swift
 ```
 
+## 发布（打包 + 签名 + 公证）
+
+```bash
+./release.sh                 # 完整流程：编译 → 签名 → 公证 → 生成并公证 dmg
+./release.sh --no-notarize   # 只打包签名，不联网公证（本地验证流程用）
+./release.sh --build-only    # 只编译 + 组装 + 签名
+./release.sh --skip-build    # 复用 build/LockIME.app，从公证开始（改完脚本重跑很快）
+```
+
+产物：`build/LockIME.app`（已 staple）和 `LockIME-<版本>.dmg`（已签名 + 已 staple）。
+
+### 为什么 app 和 dmg 各公证、各 staple 一次
+
+app 与 dmg 是两个独立对象，各自签名，票据不通用。Gatekeeper 有两个检查点：挂载 dmg 时校验 dmg，首次启动 app 时校验 app。只 staple 外层 dmg 的话，用户拖进 `/Applications` 后启动走的还是 app 自己的票据 —— 缺票据时会退化成联网校验，离线/被防火墙拦截时可能启动失败。
+
+因此顺序不能颠倒：
+
+```
+签名 app → 公证 app → staple app → 用「已 staple 的 app」做 dmg → 签名 dmg → 公证 dmg → staple dmg
+```
+
+> staple 会写入 app bundle，所以必须在制作 dmg **之前** 完成，否则 dmg 的内容摘要变化会导致签名失效。
+
+### 首次使用前准备公证凭据（一次性）
+
+```bash
+xcrun notarytool store-credentials "AC_PASSWORD" \
+  --apple-id "<你的 Apple ID>" --team-id "<TEAMID>" --password "<App 专用密码>"
+```
+
+脚本默认读取钥匙串 profile `AC_PASSWORD`，可用环境变量覆盖：
+
+```bash
+VERSION=1.0.1 SIGN_ID="Developer ID Application: ..." KEYCHAIN_PROFILE=AC_PASSWORD ./release.sh
+```
+
+> `Info.plist` 位于仓库根目录，是唯一的权威来源；版本号从它读取。改版本时改这里即可。
+
 ## 项目结构
 
 | 文件 | 职责 |
