@@ -98,12 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 图标
 
     /// 加载菜单栏图标（模板图标，随系统明暗模式自动着色）。
+    /// 原图为 72×72 高分辨率，这里把逻辑尺寸设为 18pt，让 Retina 屏以 2x 像素密度渲染，保证清晰。
     private func menuBarIcon() -> NSImage? {
         guard let url = Bundle.main.url(forResource: "menubar", withExtension: "png") else {
             return nil
         }
         let image = NSImage(contentsOf: url)
         image?.isTemplate = true
+        image?.size = NSSize(width: 18, height: 18)
         return image
     }
 
