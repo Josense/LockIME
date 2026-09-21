@@ -10,7 +10,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey.svg)](#系统要求)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](Info.plist)
+[![Version](https://img.shields.io/badge/version-1.1.0-green.svg)](Info.plist)
 [![Language](https://img.shields.io/badge/language-Swift-orange.svg)](#方式三从源码编译)
 [![Homebrew](https://img.shields.io/badge/Homebrew-cask-FBB040.svg)](#方式二homebrew)
 
