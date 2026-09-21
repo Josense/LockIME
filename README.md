@@ -47,7 +47,7 @@ LockIME 是一款轻量的 macOS 菜单栏应用，通过 Carbon Text Input Sour
 
 ### 方式一：下载 DMG（推荐）
 
-1. 从 [Releases](../../releases) 页面下载最新的 `LockIME-<版本>.dmg`。
+1. 从 [Releases](https://github.com/Josense/LockIME/releases) 页面下载最新的 `LockIME-<版本>.dmg`。
 2. 打开磁盘映像，将 `LockIME.app` 拖入 `/Applications`。
 3. 首次启动时，如系统提示来源未知，请在「系统设置 → 隐私与安全性」中允许打开。
 
