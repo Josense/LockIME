@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 
@@ -8,17 +9,14 @@ enum InputSourceManager {
         kTISNotifySelectedKeyboardInputSourceChanged as String
     )
 
-    /// 枚举所有可锁定的输入法（键盘布局 + 输入模式，排除父级模式和表情面板）。
+    /// 枚举所有可锁定的输入法（键盘布局 + 输入模式 + 手写）。
     static func availableSources() -> [TISInputSource] {
         guard let list = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else {
             return []
         }
-        return list.filter { source in
-            guard let typePtr = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) else {
-                return false
-            }
-            let type = Unmanaged<CFString>.fromOpaque(typePtr).takeUnretainedValue()
-            return type == kTISTypeKeyboardLayout || type == kTISTypeKeyboardInputMode
+        // 手写输入源属于 Palette 类别，不在键盘布局 / 输入模式里，需要单独纳入。
+        return list.filter {
+            isKeyboardLayout($0) || isKeyboardInputMode($0) || isHandwriting($0)
         }
     }
 
@@ -28,8 +26,93 @@ enum InputSourceManager {
     }
 
     /// 输入法的本地化显示名。
+    ///
+    /// 手写输入源单独处理：它的 `LocalizedName` 是「手写输入」（bundle 名），
+    /// 而系统用的是 `HandwritingLocalizedNames` 里按输入语言选出的名字（简体手写）。
     static func name(of source: TISInputSource) -> String? {
-        stringProperty(kTISPropertyLocalizedName, of: source)
+        if let handwritingName = handwritingName(of: source) {
+            return handwritingName
+        }
+        return stringProperty(kTISPropertyLocalizedName, of: source)
+    }
+
+    /// 计算一批输入源的显示名。
+    ///
+    /// 默认用本地化名称；当多个已启用输入源同名时，用**父输入法名**区分
+    /// （例如日文「かな入力」和「ローマ字入力」的子模式都叫 Hiragana，
+    /// 这时系统/我们都会退回到父输入法名）。
+    static func displayNames(for sources: [TISInputSource]) -> [String: String] {
+        let names = sources.map { name(of: $0) ?? id(of: $0) ?? "?" }
+        let counts = Dictionary(grouping: names, by: { $0 }).mapValues(\.count)
+
+        var result: [String: String] = [:]
+        for source in sources {
+            guard let id = id(of: source) else { continue }
+            let base = name(of: source) ?? id
+            if counts[base, default: 0] > 1, let parent = parentName(of: source) {
+                result[id] = parent
+            } else {
+                result[id] = base
+            }
+        }
+        return result
+    }
+
+    /// 逐级回退到父输入法名（`a.b.c` → `a.b` → `a`）。
+    private static func parentName(of source: TISInputSource) -> String? {
+        guard let id = id(of: source) else { return nil }
+        var components = id.split(separator: ".").map(String.init)
+        while components.count > 1 {
+            components.removeLast()
+            let candidate = components.joined(separator: ".")
+            if let parent = allSourcesByID[candidate], let parentName = name(of: parent) {
+                return parentName
+            }
+        }
+        return nil
+    }
+
+    /// 所有已安装输入源（含未启用的父输入法），按 ID 索引，用于查父名。
+    private static let allSourcesByID: [String: TISInputSource] = {
+        guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] else {
+            return [:]
+        }
+        var map: [String: TISInputSource] = [:]
+        for source in list {
+            if let id = id(of: source) { map[id] = source }
+        }
+        return map
+    }()
+
+    /// 输入法图标（菜单项名称左侧的小图标）。
+    ///
+    /// 系统自带输入法统一用**文字标签块**：取 `kTISPropertyInputSourceIconLabels.Primary`
+    /// （如「拼音」「US」「RO」「A」），现画一个 22×16 的圆角矩形并把文字镂空出来；
+    /// 没有文字标签的（手写）就用它的显示名当文字。
+    ///
+    /// 用户自己安装的三方输入法（如微信输入法）保留它自带的图标。
+    static func icon(of source: TISInputSource) -> NSImage? {
+        if isFromSystem(source), let label = iconLabel(of: source) ?? name(of: source), !label.isEmpty {
+            return labelChip(label)
+        }
+        guard let raw = rawIcon(of: source) else { return nil }
+        raw.size = NSSize(width: 16, height: 16)
+        return raw
+    }
+
+    /// 是否为系统自带输入法。
+    static func isFromSystem(_ source: TISInputSource) -> Bool {
+        guard let key = PrivateTISKeys.inputSourceIsFromSystem,
+              let ptr = TISGetInputSourceProperty(source, key) else {
+            // 兜底：按 bundle ID 前缀判断
+            return id(of: source)?.hasPrefix("com.apple.") ?? false
+        }
+        return CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(ptr).takeUnretainedValue())
+    }
+
+    /// 是否为手写输入源。
+    static func isHandwriting(_ source: TISInputSource) -> Bool {
+        handwritingID != nil && id(of: source) == handwritingID
     }
 
     /// 当前激活的输入法标识。
@@ -50,10 +133,195 @@ enum InputSourceManager {
         TISSelectInputSource(source)
     }
 
+    // MARK: - 图标
+
+    /// 输入源的图标短标签。
+    private static func iconLabel(of source: TISInputSource) -> String? {
+        if let id = id(of: source) {
+            if let label = systemIconLabels[id] { return label }
+            if let label = plistIconLabels[id] { return label }
+        }
+        // 兜底：键盘布局没有标签时用名称首字符（ABC → A）
+        if isKeyboardLayout(source), let first = name(of: source)?.first {
+            return String(first)
+        }
+        return nil
+    }
+
+    /// 用系统输入法菜单同款的方式画图标：22×16 圆角矩形 + 镂空标签。
+    /// 标签过宽时按「能放几个字放几个」截断（如「拼音」→「拼」，而「US」保留两位）。
+    private static func labelChip(_ label: String) -> NSImage {
+        let size = NSSize(width: 22, height: 16)
+        let font = NSFont.systemFont(ofSize: 11, weight: .heavy)
+        let text = fittedLabel(label, font: font, maxWidth: 18)
+
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        NSColor.labelColor.setFill()
+        NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 3.5, yRadius: 3.5).fill()
+
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [.font: font, .foregroundColor: NSColor.black]
+        )
+        let textSize = attributed.size()
+        let origin = NSPoint(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2
+        )
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.setBlendMode(.destinationOut)
+            attributed.draw(at: origin)
+            context.setBlendMode(.normal)
+        }
+
+        image.unlockFocus()
+        return image
+    }
+
+    /// 贪心取最长的、宽度不超过 `maxWidth` 的前缀（按字符 / grapheme cluster 截断）。
+    private static func fittedLabel(_ label: String, font: NSFont, maxWidth: CGFloat) -> String {
+        var result = ""
+        for character in label {
+            let candidate = result + String(character)
+            let width = (candidate as NSString).size(withAttributes: [.font: font]).width
+            if width > maxWidth { break }
+            result = candidate
+        }
+        return result.isEmpty ? String(label.prefix(1)) : result
+    }
+
+    /// 手写输入源按其输入语言从 `HandwritingLocalizedNames` 取名字（如 zh-Hans → 简体手写）。
+    private static func handwritingName(of source: TISInputSource) -> String? {
+        guard handwritingID != nil, id(of: source) == handwritingID else { return nil }
+        guard let key = PrivateTISKeys.handwritingLocalizedNames,
+              let ptr = TISGetInputSourceProperty(source, key),
+              let names = Unmanaged<NSDictionary>.fromOpaque(ptr).takeUnretainedValue() as? [String: String]
+        else { return nil }
+        if let languageKey = PrivateTISKeys.intendedLanguage,
+           let languagePtr = TISGetInputSourceProperty(source, languageKey) {
+            let language = Unmanaged<CFString>.fromOpaque(languagePtr).takeUnretainedValue() as String
+            if let name = names[language] { return name }
+        }
+        return names.values.first
+    }
+
+    /// 输入法自带图标（没有声明短标签时的回退）：优先图标文件 URL，其次 IconRef。
+    private static func rawIcon(of source: TISInputSource) -> NSImage? {
+        if let ptr = TISGetInputSourceProperty(source, kTISPropertyIconImageURL) {
+            let url = Unmanaged<CFURL>.fromOpaque(ptr).takeUnretainedValue() as URL
+            if let image = NSImage(contentsOf: url) { return image }
+        }
+        if let ptr = TISGetInputSourceProperty(source, kTISPropertyIconRef) {
+            let image = NSImage(iconRef: IconRef(ptr))
+            if image.isValid { return image }
+        }
+        return nil
+    }
+
     // MARK: - 私有
 
     private static func stringProperty(_ key: CFString, of source: TISInputSource) -> String? {
         guard let ptr = TISGetInputSourceProperty(source, key) else { return nil }
         return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+    }
+
+    private static func hasType(_ source: TISInputSource, _ expected: CFString) -> Bool {
+        guard let ptr = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) else {
+            return false
+        }
+        return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() == expected
+    }
+
+    private static func isKeyboardLayout(_ source: TISInputSource) -> Bool {
+        hasType(source, kTISTypeKeyboardLayout)
+    }
+
+    private static func isKeyboardInputMode(_ source: TISInputSource) -> Bool {
+        hasType(source, kTISTypeKeyboardInputMode)
+    }
+
+    /// 手写输入源的 ID（`com.apple.inputmethod.ChineseHandwriting`）。
+    static let handwritingID: String? = PrivateTISKeys.lookupString("kTISAppleChineseHandwritingInputSourceID")
+
+    /// 系统声明的图标短标签：`输入源 ID -> Primary 标签`。
+    /// `kTISPropertyInputSourceIconLabels` 是已导出的 Carbon SPI，直接给出菜单实际使用的标签
+    /// （键盘布局也在其中，如 U.S. → US、Romanian → RO）。
+    private static let systemIconLabels: [String: String] = {
+        guard let key = PrivateTISKeys.inputSourceIconLabels else { return [:] }
+        var result: [String: String] = [:]
+        let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() as? [TISInputSource] ?? []
+        for source in list {
+            guard let id = id(of: source),
+                  let ptr = TISGetInputSourceProperty(source, key),
+                  let labels = Unmanaged<NSDictionary>.fromOpaque(ptr).takeUnretainedValue() as? [String: Any],
+                  let primary = labels["Primary"] as? String
+            else { continue }
+            result[id] = primary
+        }
+        return result
+    }()
+
+    /// 兜底：从各输入法的 Info.plist 里读 `TISIconLabels.Primary`（老系统上没有上面的 SPI 时）。
+    private static let plistIconLabels: [String: String] = {
+        var labels: [String: String] = [:]
+        let fileManager = FileManager.default
+        let roots = [
+            "/System/Library/Input Methods",
+            "/Library/Input Methods",
+            "/System/Library/Keyboard Layouts",
+            "/Library/Keyboard Layouts",
+        ]
+
+        for root in roots {
+            guard let entries = try? fileManager.contentsOfDirectory(atPath: root) else { continue }
+            for entry in entries {
+                let contents = "\(root)/\(entry)/Contents"
+                var plists = ["\(contents)/Info.plist"]
+                if let plugins = try? fileManager.contentsOfDirectory(atPath: "\(contents)/PlugIns") {
+                    plists += plugins.map { "\(contents)/PlugIns/\($0)/Contents/Info.plist" }
+                }
+
+                for path in plists {
+                    guard let data = fileManager.contents(atPath: path),
+                          let plist = try? PropertyListSerialization.propertyList(
+                              from: data, options: [], format: nil
+                          ) as? [String: Any],
+                          let component = plist["ComponentInputModeDict"] as? [String: Any],
+                          let modes = component["tsInputModeListKey"] as? [String: Any]
+                    else { continue }
+
+                    for value in modes.values {
+                        guard let info = value as? [String: Any],
+                              let iconLabels = info["TISIconLabels"] as? [String: Any],
+                              let primary = iconLabels["Primary"] as? String,
+                              let sourceID = info["TISInputSourceID"] as? String
+                        else { continue }
+                        labels[sourceID] = primary
+                    }
+                }
+            }
+        }
+        return labels
+    }()
+}
+
+/// 系统输入法菜单使用的若干 Carbon SPI（未公开在公共头文件中），通过 dlsym 动态解析。
+enum PrivateTISKeys {
+    static let inputSourceIconLabels = lookup("kTISPropertyInputSourceIconLabels")
+    static let inputSourceIsFromSystem = lookup("kTISPropertyInputSourceIsFromSystem")
+    static let handwritingLocalizedNames = lookup("kTISPropertyHandwritingLocalizedNames")
+    static let intendedLanguage = lookup("kTISPropertyIntendedLanguage")
+
+    static func lookup(_ name: String) -> CFString? {
+        guard let handle = dlopen("/System/Library/Frameworks/Carbon.framework/Carbon", RTLD_LAZY),
+              let symbol = dlsym(handle, name) else { return nil }
+        return symbol.assumingMemoryBound(to: CFString.self).pointee
+    }
+
+    /// 解析导出为 `CFStringRef` 的常量并转成 Swift String。
+    static func lookupString(_ name: String) -> String? {
+        lookup(name) as String?
     }
 }

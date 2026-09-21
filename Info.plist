@@ -4,6 +4,14 @@
 <dict>
     <key>CFBundleName</key>
     <string>LockIME</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh-Hans</string>
+    <!-- 声明本地化语言，保证 TIS 返回的输入法名称与系统菜单一致（如“简体拼音”而非“Pinyin – Simplified”）。 -->
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>LockIME</string>
     <key>CFBundleIdentifier</key>

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// 菜单栏界面：状态图标 + 下拉菜单。
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -30,11 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
+        let sources = InputSourceManager.availableSources()
+        let names = InputSourceManager.displayNames(for: sources)
+
         // 状态行
         let statusTitle: String
         if let lockedID = controller.lockedID,
            let source = InputSourceManager.find(byID: lockedID) {
-            statusTitle = "已锁定：\(InputSourceManager.name(of: source) ?? lockedID)"
+            statusTitle = "已锁定：\(names[lockedID] ?? InputSourceManager.name(of: source) ?? lockedID)"
         } else {
             statusTitle = "未锁定"
         }
@@ -45,18 +49,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 输入法列表
-        for source in InputSourceManager.availableSources() {
-            guard let id = InputSourceManager.id(of: source) else { continue }
-            let item = NSMenuItem(
-                title: InputSourceManager.name(of: source) ?? id,
-                action: #selector(selectInputSource(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = id
-            item.state = (id == controller.lockedID) ? .on : .off
-            menu.addItem(item)
+        // 输入法列表（手写这类单列来源单独成组）
+        let mainSources = sources.filter { !InputSourceManager.isHandwriting($0) }
+        let handwritingSources = sources.filter { InputSourceManager.isHandwriting($0) }
+
+        for source in mainSources {
+            addInputSource(source, to: menu, names: names)
+        }
+
+        if !handwritingSources.isEmpty {
+            menu.addItem(.separator())
+            for source in handwritingSources {
+                addInputSource(source, to: menu, names: names)
+            }
         }
 
         menu.addItem(.separator())
@@ -76,6 +81,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - 动作
+
+    /// 把一个输入源加进菜单（含图标与勾选状态）。
+    private func addInputSource(_ source: TISInputSource, to menu: NSMenu, names: [String: String]) {
+        guard let id = InputSourceManager.id(of: source) else { return }
+        let item = NSMenuItem(
+            title: names[id] ?? id,
+            action: #selector(selectInputSource(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = id
+        // 前置输入法图标，与系统输入法菜单保持一致
+        item.image = InputSourceManager.icon(of: source)
+        item.state = (id == controller.lockedID) ? .on : .off
+        menu.addItem(item)
+    }
 
     @objc private func selectInputSource(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
