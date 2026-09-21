@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Resources/menubar.png" width="96" height="96" alt="LockIME icon">
+<img src="Resources/AppIcon.png" width="128" height="128" alt="LockIME icon">
 
 # LockIME
 
