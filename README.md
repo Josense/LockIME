@@ -38,7 +38,7 @@ LockIME 是一款轻量的 macOS 菜单栏应用，通过 Carbon Text Input Sour
 ## 系统要求
 
 - macOS 13.0（Ventura）或更高版本
-- 下载预编译版本需要 Apple Silicon 或 Intel 处理器（依据发布包而定）
+- 预编译版本为 Universal 二进制，同时支持 Apple Silicon 与 Intel 处理器
 - 从源码编译需要 Xcode Command Line Tools
 
 ## 安装

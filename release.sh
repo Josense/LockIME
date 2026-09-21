@@ -17,7 +17,7 @@
 #
 # 可覆盖的环境变量:
 #   VERSION=1.0.1   SIGN_ID="Developer ID Application: ..."   KEYCHAIN_PROFILE=AC_PASSWORD
-#   NOTARY_LABEL=...  ARCH=arm64  DMG_LAYOUT=0
+#   NOTARY_LABEL=...  ARCHS="arm64 x86_64"  DMG_LAYOUT=0
 #
 set -euo pipefail
 
@@ -48,7 +48,8 @@ if [[ -z "${SIGN_ID:-}" ]]; then
 fi
 KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-AC_PASSWORD}"
 NOTARY_LABEL="${NOTARY_LABEL:-$APP_NAME-$VERSION}"
-ARCH="${ARCH:-$(uname -m)}"
+# 默认构建 Universal（arm64 + x86_64）；可用 ARCH 指定单一架构，或 ARCHS 指定架构列表
+ARCHS="${ARCHS:-${ARCH:-arm64 x86_64}}"
 DMG_LAYOUT="${DMG_LAYOUT:-1}"
 
 # ─────────────────────────── 参数 ───────────────────────────
@@ -115,7 +116,7 @@ step "环境检查"
 info "版本      : $VERSION"
 info "签名身份  : $SIGN_ID"
 info "公证 profile: $KEYCHAIN_PROFILE"
-info "架构      : $ARCH"
+info "架构      : $ARCHS"
 for f in "${SRC_FILES[@]}"; do
   [[ -f "$ROOT/$f" ]] || die "缺少源文件: $f"
 done
@@ -140,8 +141,21 @@ if [[ $BUILD -eq 1 ]]; then
   rm -rf "$BUILD_DIR"
   mkdir -p "$BUILD_DIR"
   BIN="$BUILD_DIR/$APP_NAME"
-  swiftc -O -target "$ARCH-apple-macos13.0" -o "$BIN" "${SRC_FILES[@]}"
-  ok "编译完成: $(file -b "$BIN" | cut -d, -f1-2)"
+  SLICES=()
+  for a in $ARCHS; do
+    slice="$BUILD_DIR/$APP_NAME-$a"
+    swiftc -O -target "$a-apple-macos13.0" -o "$slice" "${SRC_FILES[@]}"
+    lipo "$slice" -verify_arch "$a" >/dev/null 2>&1 \
+      || die "编译产物不含预期架构: $a"
+    SLICES+=("$slice")
+  done
+  if [[ ${#SLICES[@]} -gt 1 ]]; then
+    lipo -create -output "$BIN" "${SLICES[@]}"
+    rm -f "${SLICES[@]}"
+  else
+    mv "${SLICES[0]}" "$BIN"
+  fi
+  ok "编译完成: $(lipo -archs "$BIN")"
 else
   step "跳过编译（--skip-build）"
   [[ -f "$APP/Contents/MacOS/$APP_NAME" ]] || die "build/$APP_NAME.app 不存在，无法跳过编译"
