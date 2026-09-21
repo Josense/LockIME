@@ -84,20 +84,24 @@ enum InputSourceManager {
         return map
     }()
 
+    /// 所有菜单图标统一的槽位尺寸（系统输入法的文字块就是这么大）。
+    /// 三方输入法的图标也放进同样大小的槽位里居中，保证所有菜单项文字对齐。
+    static let iconSlot = NSSize(width: 22, height: 16)
+
     /// 输入法图标（菜单项名称左侧的小图标）。
     ///
     /// 系统自带输入法统一用**文字标签块**：取 `kTISPropertyInputSourceIconLabels.Primary`
     /// （如「拼音」「US」「RO」「A」），现画一个 22×16 的圆角矩形并把文字镂空出来；
     /// 没有文字标签的（手写）就用它的显示名当文字。
     ///
-    /// 用户自己安装的三方输入法（如微信输入法）保留它自带的图标。
+    /// 用户自己安装的三方输入法（如微信输入法）保留它自带的图标，
+    /// 但同样放进 22×16 的槽位里居中，避免宽度不一导致菜单项错位。
     static func icon(of source: TISInputSource) -> NSImage? {
         if isFromSystem(source), let label = iconLabel(of: source) ?? name(of: source), !label.isEmpty {
             return labelChip(label)
         }
         guard let raw = rawIcon(of: source) else { return nil }
-        raw.size = NSSize(width: 16, height: 16)
-        return raw
+        return slotIcon(raw)
     }
 
     /// 是否为系统自带输入法。
@@ -151,7 +155,7 @@ enum InputSourceManager {
     /// 用系统输入法菜单同款的方式画图标：22×16 圆角矩形 + 镂空标签。
     /// 标签过宽时按「能放几个字放几个」截断（如「拼音」→「拼」，而「US」保留两位）。
     private static func labelChip(_ label: String) -> NSImage {
-        let size = NSSize(width: 22, height: 16)
+        let size = iconSlot
         let font = NSFont.systemFont(ofSize: 11, weight: .heavy)
         let text = fittedLabel(label, font: font, maxWidth: 18)
 
@@ -205,6 +209,26 @@ enum InputSourceManager {
             if let name = names[language] { return name }
         }
         return names.values.first
+    }
+
+    /// 把三方输入法的图标放进统一槽位：等比缩放到不超出槽位，然后居中。
+    private static func slotIcon(_ icon: NSImage) -> NSImage {
+        let slot = iconSlot
+        let natural = icon.size
+        let scale = min(1, min(slot.width / natural.width, slot.height / natural.height))
+        let size = NSSize(width: natural.width * scale, height: natural.height * scale)
+        let rect = NSRect(
+            x: (slot.width - size.width) / 2,
+            y: (slot.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+
+        let image = NSImage(size: slot)
+        image.lockFocus()
+        icon.draw(in: rect)
+        image.unlockFocus()
+        return image
     }
 
     /// 输入法自带图标（没有声明短标签时的回退）：优先图标文件 URL，其次 IconRef。
